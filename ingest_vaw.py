@@ -12,6 +12,11 @@ SUPABASE_URL = "https://jbqoqoufhzlxroslwdzs.supabase.co"
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "GEMINI_API_KEY")
 
+# --- WHATSAPP CLOUD API CONFIGURATION ---
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID", "")
+WHATSAPP_TO_NUMBER = os.environ.get("WHATSAPP_TO_NUMBER", "")
+
 RSS_FEEDS = [
     {"name": "Dawn News", "url": "https://www.dawn.com/feeds/home"},
     {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml"},
@@ -51,6 +56,74 @@ def url_exists(source_url: str) -> bool:
         params={"source_url": f"eq.{source_url}", "select": "id"}
     )
     return res.status_code == 200 and len(res.json()) > 0
+
+def send_whatsapp_digest(new_incidents: list):
+    """Sends a single WhatsApp summary alert via Meta Cloud API when new drafts are queued."""
+    if not new_incidents:
+        return
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID and WHATSAPP_TO_NUMBER):
+        print("  [WHATSAPP SKIPPED] Missing WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, or WHATSAPP_TO_NUMBER.")
+        return
+
+    api_url = f"https://graph.facebook.com/v25.0/{WHATSAPP_PHONE_ID}/messages"
+    wa_headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    lines = [
+        f"🚨 *VAW Media Alert: {len(new_incidents)} New Draft(s) Ready*",
+        ""
+    ]
+    for idx, item in enumerate(new_incidents[:5], start=1):
+        lines.append(
+            f"{idx}. *{item['headline']}*\n"
+            f"   📍 {item['city']}, {item['country']} | 📅 {item['incident_date']} | ⚠️ {item['severity_level'].upper()}\n"
+            f"   📰 {item['publication_name']}"
+        )
+
+    if len(new_incidents) > 5:
+        lines.append(f"\n_...and {len(new_incidents) - 5} more draft(s)._")
+
+    lines.append(
+        "\n🔗 *Review & Publish in Supabase:*\n"
+        "https://supabase.com/dashboard/project/jbqoqoufhzlxroslwdzs/editor"
+    )
+    body_text = "\n".join(lines)
+
+    # 1. Try sending full free-form incident digest (works inside 24h customer service window)
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": WHATSAPP_TO_NUMBER,
+        "type": "text",
+        "text": {"preview_url": False, "body": body_text}
+    }
+
+    try:
+        res = requests.post(api_url, headers=wa_headers, json=payload, timeout=15)
+        if res.status_code in (200, 201):
+            print(f"  [WHATSAPP SENT] Digest delivered to {WHATSAPP_TO_NUMBER}")
+            return
+
+        # 2. Fallback: If 24h window closed (error 131047), trigger approved template so user gets pinged
+        err_json = res.json() if res.text else {}
+        err_code = err_json.get("error", {}).get("code")
+        if err_code == 131047:
+            fallback_payload = {
+                "messaging_product": "whatsapp",
+                "to": WHATSAPP_TO_NUMBER,
+                "type": "template",
+                "template": {
+                    "name": "hello_world",
+                    "language": {"code": "en_US"}
+                }
+            }
+            fb_res = requests.post(api_url, headers=wa_headers, json=fallback_payload, timeout=15)
+            print(f"  [WHATSAPP TEMPLATE FALLBACK] Status {fb_res.status_code} (reply 'Hi' to reopen 24h window)")
+        else:
+            print(f"  [WHATSAPP ERROR] {res.status_code}: {res.text}")
+    except Exception as e:
+        print(f"  [WHATSAPP EXCEPTION] {e}")
 
 def extract_batch(candidates: list, pub_name: str):
     """Analyzes all candidate headlines from a feed in ONE single Gemini request."""
@@ -102,7 +175,6 @@ def extract_batch(candidates: list, pub_name: str):
             last_error = e
             err = str(e)
             if "429" in err or "404" in err or "503" in err:
-                # Immediately switch to next model's separate quota pool without burning retries
                 continue
             raise e
 
@@ -110,7 +182,7 @@ def extract_batch(candidates: list, pub_name: str):
 
 def run_pipeline():
     print("Starting batched VAW RSS ingestion pipeline...")
-    inserted = 0
+    inserted_items = []
 
     for feed_info in RSS_FEEDS:
         feed = feedparser.parse(feed_info["url"], agent="Mozilla/5.0")
@@ -168,7 +240,7 @@ def run_pipeline():
 
                 res = requests.post(f"{SUPABASE_URL}/rest/v1/incidents", headers=HEADERS, json=payload)
                 if res.status_code in (200, 201):
-                    inserted += 1
+                    inserted_items.append(payload)
                     print(f"  [QUEUED] {data['city']}, {data['country']} — {data['headline']}")
                 else:
                     print(f"  [DB ERROR] {res.status_code}: {res.text}")
@@ -177,7 +249,8 @@ def run_pipeline():
         except Exception as e:
             print(f"  [FEED ERROR] {feed_info['name']}: {e}")
 
-    print(f"Run complete. {inserted} new incidents added to draft queue.")
+    print(f"Run complete. {len(inserted_items)} new incidents added to draft queue.")
+    send_whatsapp_digest(inserted_items)
 
 if __name__ == "__main__":
     run_pipeline()
