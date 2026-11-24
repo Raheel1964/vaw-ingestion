@@ -117,19 +117,25 @@ def send_whatsapp_digest(new_incidents: list):
 def extract_batch(candidates: list, pub_name: str):
     """Analyzes all candidate headlines from a feed in ONE single Gemini request."""
     items_text = "\n".join([
-        f"[{i}] Headline: {c['title']} | Summary: {c['summary'][:220]} | Date: {c['pub_date']}"
+        f"[{i}] Headline: {c['title']} | Summary: {c['summary'][:250]} | Date: {c['pub_date']}"
         for i, c in enumerate(candidates)
     ])
 
     prompt = f"""
     Review the numbered news items below from {pub_name}.
-    Identify ONLY items that report a specific, real-world incident of violence against women or girls (VAW), such as domestic abuse, femicide, honor killing, acid attack, sexual assault, abduction, stalking, or cyber harassment.
-    Ignore political news, general crime unrelated to gender-based violence, animal attacks, accidents, opinion pieces, or policy debates.
+    Identify ONLY items that report a specific, concrete, real-world case or incident of violence against women or girls (VAW), such as domestic abuse, femicide, honor killing, acid attack, sexual assault, abduction, stalking, or cyber harassment.
+
+    STRICT EXCLUSIONS — Return {{"incidents": []}} or exclude any item that is:
+    1. A global, regional, or annual statistical report, UN/NGO study, or aggregate data roundup (e.g., "Five women killed every hour globally", UNODC reports, annual crime surveys).
+    2. An awareness day campaign, International Women's Day / Nov 25 event coverage, seminar, protest rally, or awareness walk without a specific new victim incident.
+    3. A policy debate, legislative bill, court reform commentary, or opinion/editorial piece.
+    4. Political news, general street crime/robbery unrelated to gender-based violence, accidents, or animal attacks.
+    5. Any article where a specific city, district, or province cannot be identified (never output "Unknown" for city or country).
 
     News Items:
     {items_text}
 
-    Return a JSON object with a single key "incidents" containing an array of ONLY the matching VAW incidents (return {{"incidents": []}} if none qualify):
+    Return a JSON object with a single key "incidents" containing an array of ONLY the qualifying specific VAW cases (return {{"incidents": []}} if none qualify):
     {{
       "incidents": [
         {{
@@ -137,14 +143,14 @@ def extract_batch(candidates: list, pub_name: str):
           "headline": "concise factual headline",
           "incident_type": "Femicide | Domestic Abuse | Physical Assault | Harassment | Cyber Violence",
           "incident_date": "YYYY-MM-DD",
-          "city": "City name",
+          "city": "Specific city or district name",
           "country": "Country name",
           "latitude": 0.0,
           "longitude": 0.0,
           "victim_count": 1,
           "perpetrator_count": 1,
           "severity_level": "moderate | high | extreme",
-          "summary": "2-sentence objective summary"
+          "summary": "2-sentence objective summary naming the location and facts"
         }}
       ]
     }}
