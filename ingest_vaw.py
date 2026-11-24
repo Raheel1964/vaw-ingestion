@@ -58,7 +58,7 @@ def url_exists(source_url: str) -> bool:
     return res.status_code == 200 and len(res.json()) > 0
 
 def send_whatsapp_digest(new_incidents: list):
-    """Sends a single WhatsApp summary alert via Meta Cloud API when new drafts are queued."""
+    """Sends a WhatsApp Utility template alert (vaw_draft_alert) when new drafts are queued."""
     if not new_incidents:
         return
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID and WHATSAPP_TO_NUMBER):
@@ -71,60 +71,48 @@ def send_whatsapp_digest(new_incidents: list):
         "Content-Type": "application/json"
     }
 
-    lines = [
-        f"🚨 *VAW Media Alert: {len(new_incidents)} New Draft(s) Ready*",
-        ""
-    ]
+    # Meta prohibits newlines or >4 consecutive spaces inside template parameters
+    summary_items = []
     for idx, item in enumerate(new_incidents[:5], start=1):
-        lines.append(
-            f"{idx}. *{item['headline']}*\n"
-            f"   📍 {item['city']}, {item['country']} | 📅 {item['incident_date']} | ⚠️ {item['severity_level'].upper()}\n"
-            f"   📰 {item['publication_name']}"
-        )
+        headline = (item.get("headline") or item.get("title") or "Untitled Incident").replace("\n", " ").strip()
+        loc = (item.get("location") or item.get("city") or item.get("province") or "Pakistan").replace("\n", " ").strip()
+        src = (item.get("source") or item.get("source_name") or "RSS").replace("\n", " ").strip()
+        summary_items.append(f"{idx}. {headline[:60]} - {loc} ({src})")
 
     if len(new_incidents) > 5:
-        lines.append(f"\n_...and {len(new_incidents) - 5} more draft(s)._")
+        summary_items.append(f"+{len(new_incidents) - 5} more")
 
-    lines.append(
-        "\n🔗 *Review & Publish in Supabase:*\n"
-        "https://supabase.com/dashboard/project/jbqoqoufhzlxroslwdzs/editor"
-    )
-    body_text = "\n".join(lines)
+    incidents_line = " | ".join(summary_items)
+    supabase_url = "https://supabase.com/dashboard/project/jbqoqoufhzlxroslwdzs/editor"
 
-    # 1. Try sending full free-form incident digest (works inside 24h customer service window)
     payload = {
         "messaging_product": "whatsapp",
         "to": WHATSAPP_TO_NUMBER,
-        "type": "text",
-        "text": {"preview_url": False, "body": body_text}
+        "type": "template",
+        "template": {
+            "name": "vaw_draft_alert",
+            "language": {"code": "en"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": str(len(new_incidents))},
+                        {"type": "text", "text": incidents_line[:900]},
+                        {"type": "text", "text": supabase_url}
+                    ]
+                }
+            ]
+        }
     }
 
     try:
-        res = requests.post(api_url, headers=wa_headers, json=payload, timeout=15)
-        if res.status_code in (200, 201):
-            print(f"  [WHATSAPP SENT] Digest delivered to {WHATSAPP_TO_NUMBER}")
-            return
-
-        # 2. Fallback: If 24h window closed (error 131047), trigger approved template so user gets pinged
-        err_json = res.json() if res.text else {}
-        err_code = err_json.get("error", {}).get("code")
-        if err_code == 131047:
-            fallback_payload = {
-                "messaging_product": "whatsapp",
-                "to": WHATSAPP_TO_NUMBER,
-                "type": "template",
-                "template": {
-                    "name": "hello_world",
-                    "language": {"code": "en_US"}
-                }
-            }
-            fb_res = requests.post(api_url, headers=wa_headers, json=fallback_payload, timeout=15)
-            print(f"  [WHATSAPP TEMPLATE FALLBACK] Status {fb_res.status_code} (reply 'Hi' to reopen 24h window)")
+        resp = requests.post(api_url, headers=wa_headers, json=payload, timeout=20)
+        if resp.status_code in (200, 201):
+            print(f"  [WHATSAPP SENT] Utility alert delivered to {WHATSAPP_TO_NUMBER} ({len(new_incidents)} incident(s)).")
         else:
-            print(f"  [WHATSAPP ERROR] {res.status_code}: {res.text}")
+            print(f"  [WHATSAPP ERROR] {resp.status_code}: {resp.text}")
     except Exception as e:
         print(f"  [WHATSAPP EXCEPTION] {e}")
-
 def extract_batch(candidates: list, pub_name: str):
     """Analyzes all candidate headlines from a feed in ONE single Gemini request."""
     items_text = "\n".join([
