@@ -72,7 +72,7 @@ def send_whatsapp_digest(new_incidents: list):
     }
 
     # Meta prohibits newlines or >4 consecutive spaces inside template parameters
-   summary_items = []
+    summary_items = []
     for idx, item in enumerate(new_incidents[:5], start=1):
         headline = (item.get("headline") or "Untitled Incident").replace("\n", " ").strip()
         city = (item.get("city") or "").replace("\n", " ").strip()
