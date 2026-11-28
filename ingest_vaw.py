@@ -177,11 +177,23 @@ def extract_batch(candidates: list, pub_name: str):
     raise last_error
 
 def run_pipeline():
-    print("Starting batched VAW RSS ingestion pipeline...")
+    print("Starting batched VAW RSS ingestion pipeline...", flush=True)
     inserted_items = []
 
     for feed_info in RSS_FEEDS:
-        feed = feedparser.parse(feed_info["url"], agent="Mozilla/5.0")
+        print(f"Scanning: {feed_info['name']}...", flush=True)
+        try:
+            resp = requests.get(
+                feed_info["url"],
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15
+            )
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.content)
+        except Exception as e:
+            print(f"  [FEED TIMEOUT/ERROR] {feed_info['name']}: {e}", flush=True)
+            continue
+
         candidates = []
 
         for entry in feed.entries[:30]:
