@@ -229,14 +229,17 @@ def run_pipeline():
                     "summary": data["summary"],
                     "publication_name": feed_info["name"],
                     "source_url": src["link"],
-                    "verified": False,
-                    "status": "draft"
+                    "publication_name": feed_info["name"],
+                    "source_url": src["link"],
+                    "verified": bool(data.get("city") and data.get("country")),
+                    "status": "published" if (data.get("city") and data.get("country")) else "draft"
                 }
 
                 res = requests.post(f"{SUPABASE_URL}/rest/v1/incidents", headers=HEADERS, json=payload)
                 if res.status_code in (200, 201):
                     inserted_items.append(payload)
-                    print(f"  [QUEUED] {data['city']}, {data['country']} — {data['headline']}")
+                    tag = "PUBLISHED" if payload["verified"] else "QUEUED"
+                    print(f"  [{tag}] {data['city']}, {data['country']} — {data['headline']}")
                 else:
                     print(f"  [DB ERROR] {res.status_code}: {res.text}")
 
