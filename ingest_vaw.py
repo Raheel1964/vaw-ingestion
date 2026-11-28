@@ -53,7 +53,8 @@ def url_exists(source_url: str) -> bool:
     res = requests.get(
         f"{SUPABASE_URL}/rest/v1/incidents",
         headers=HEADERS,
-        params={"source_url": f"eq.{source_url}", "select": "id"}
+        params={"source_url": f"eq.{source_url}", "select": "id"},
+        timeout=15
     )
     return res.status_code == 200 and len(res.json()) > 0
 
